@@ -1,3 +1,7 @@
+#include "calc.h"
+#include "parse.h"
+#include "server_io.h"
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -9,33 +13,57 @@
 
 #define PORT 8080
 #define BACKLOG 5
-#define BUF_SIZE 1024
 
 void HandleClient(int client_socket) {
-    char *buf = (char *)malloc(BUF_SIZE);
-    if (buf == NULL) {
-        perror("malloc failed in HandleClient");
-        close(client_socket);
-        return;
+    char *request = NULL;
+    RequestLine request_line;
+    memset(&request_line, 0, sizeof(request_line));
+    char *body = NULL;
+    char *response = NULL;
+
+    request = ReceiveRequest(client_socket);
+    if (!request) {
+        perror("ReceiveRequest failed");
+        goto cleanup;
     }
-    ssize_t recv_size = 0;
-    if ((recv_size = recv(client_socket, buf, BUF_SIZE - 1, 0)) == -1) {
-        const int error = errno;
-        if (error != EINTR) {
-            perror("recv failed");
-        }
+    printf("====request====\n");
+    printf("%s\n", request);
+    printf("===============\n");
+    printf("\n");
+
+    if (ParseRequestLine(request, &request_line) == -1) {
+        perror("ParseRequest falied");
+        goto cleanup;
     }
 
-    buf[recv_size] = '\0';
-    printf("receive : %s\n", buf);
-    if (send(client_socket, buf, recv_size, 0) == -1) {
-        const int error = errno;
-        if (error != EINTR) {
-            perror("send failed");
-        }
+    body = HandleCalculate(&request_line);
+    if (!body) {
+        perror("HandleCalculate falied");
+        goto cleanup;
     }
-    free(buf);
+   
+    response = BuildResponse(body);
+    if (!response) {
+        perror("BuildResponse falied");
+        goto cleanup;
+    }
+    printf("====response====\n");
+    printf("%s\n", response);
+    printf("================\n");
+    printf("\n");
+
+    if (SendResponse(client_socket, response) == -1) {
+        perror("SendResponse falied");
+        goto cleanup;
+    }
+
+cleanup:
+    free(request);
+    CleanupRequestLine(&request_line);
+    free(body);
+    free(response);
     close(client_socket);
+
 }
 
 int main() {
@@ -78,6 +106,7 @@ int main() {
         }
         printf("Connection accepted from %s:%d\n", 
             inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        printf("\n");
         HandleClient(client_socket);
     }
 
